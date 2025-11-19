@@ -16,17 +16,17 @@ RDR_NAMESPACE_BEGIN
 
 bool AABB::isOverlap(const AABB &other) const {
   return ((other.low_bnd[0] >= this->low_bnd[0] &&
-              other.low_bnd[0] <= this->upper_bnd[0]) ||
-             (this->low_bnd[0] >= other.low_bnd[0] &&
-                 this->low_bnd[0] <= other.upper_bnd[0])) &&
+           other.low_bnd[0] <= this->upper_bnd[0]) ||
+          (this->low_bnd[0] >= other.low_bnd[0] &&
+           this->low_bnd[0] <= other.upper_bnd[0])) &&
          ((other.low_bnd[1] >= this->low_bnd[1] &&
-              other.low_bnd[1] <= this->upper_bnd[1]) ||
-             (this->low_bnd[1] >= other.low_bnd[1] &&
-                 this->low_bnd[1] <= other.upper_bnd[1])) &&
+           other.low_bnd[1] <= this->upper_bnd[1]) ||
+          (this->low_bnd[1] >= other.low_bnd[1] &&
+           this->low_bnd[1] <= other.upper_bnd[1])) &&
          ((other.low_bnd[2] >= this->low_bnd[2] &&
-              other.low_bnd[2] <= this->upper_bnd[2]) ||
-             (this->low_bnd[2] >= other.low_bnd[2] &&
-                 this->low_bnd[2] <= other.upper_bnd[2]));
+           other.low_bnd[2] <= this->upper_bnd[2]) ||
+          (this->low_bnd[2] >= other.low_bnd[2] &&
+           this->low_bnd[2] <= other.upper_bnd[2]));
 }
 
 bool AABB::intersect(const Ray &ray, Float *t_in, Float *t_out) const {
@@ -43,7 +43,31 @@ bool AABB::intersect(const Ray &ray, Float *t_in, Float *t_out) const {
   //    for getting the inverse direction of the ray.
   // @see Min/Max/ReduceMin/ReduceMax
   //    for vector min/max operations.
-  UNIMPLEMENTED;
+  const Vec3f &invdir = ray.safe_inverse_direction;
+
+  Float tx1 = (low_bnd.x - ray.origin.x) * invdir.x;
+  Float tx2 = (upper_bnd.x - ray.origin.x) * invdir.x;
+  Float tmin = std::min(tx1, tx2);
+  Float tmax = std::max(tx1, tx2);
+
+  Float ty1 = (low_bnd.y - ray.origin.y) * invdir.y;
+  Float ty2 = (upper_bnd.y - ray.origin.y) * invdir.y;
+  tmin = std::max(tmin, std::min(ty1, ty2));
+  tmax = std::min(tmax, std::max(ty1, ty2));
+
+  Float tz1 = (low_bnd.z - ray.origin.z) * invdir.z;
+  Float tz2 = (upper_bnd.z - ray.origin.z) * invdir.z;
+  tmin = std::max(tmin, std::min(tz1, tz2));
+  tmax = std::min(tmax, std::max(tz1, tz2));
+
+  if (tmax < tmin || tmax < ray.t_min || tmin > ray.t_max)
+    return false;
+
+  if (t_in)
+    *t_in = tmin;
+  if (t_out)
+    *t_out = tmax;
+  return true;
 }
 
 /* ===================================================================== *
@@ -53,9 +77,10 @@ bool AABB::intersect(const Ray &ray, Float *t_in, Float *t_out) const {
  * ===================================================================== */
 
 bool TriangleIntersect(Ray &ray, const uint32_t &triangle_index,
-    const ref<TriangleMeshResource> &mesh, SurfaceInteraction &interaction) {
+                       const ref<TriangleMeshResource> &mesh,
+                       SurfaceInteraction &interaction) {
   using InternalScalarType = Double;
-  using InternalVecType    = Vec<InternalScalarType, 3>;
+  using InternalVecType = Vec<InternalScalarType, 3>;
 
   AssertAllValid(ray.direction, ray.origin);
   AssertAllNormalized(ray.direction);
@@ -67,9 +92,9 @@ bool TriangleIntersect(Ray &ray, const uint32_t &triangle_index,
   assert(v_idx.z < mesh->vertices.size());
 
   InternalVecType dir = Cast<InternalScalarType>(ray.direction);
-  InternalVecType v0  = Cast<InternalScalarType>(vertices[v_idx[0]]);
-  InternalVecType v1  = Cast<InternalScalarType>(vertices[v_idx[1]]);
-  InternalVecType v2  = Cast<InternalScalarType>(vertices[v_idx[2]]);
+  InternalVecType v0 = Cast<InternalScalarType>(vertices[v_idx[0]]);
+  InternalVecType v1 = Cast<InternalScalarType>(vertices[v_idx[1]]);
+  InternalVecType v2 = Cast<InternalScalarType>(vertices[v_idx[2]]);
 
   // TODO(HW3): implement ray-triangle intersection test.
   // You should compute the u, v, t as InternalScalarType
@@ -95,14 +120,27 @@ bool TriangleIntersect(Ray &ray, const uint32_t &triangle_index,
   InternalScalarType u = InternalScalarType(0);
   InternalScalarType v = InternalScalarType(0);
   InternalScalarType t = InternalScalarType(0);
-  UNIMPLEMENTED;
+  auto e1 = v1 - v0;
+  auto e2 = v2 - v0;
+  auto s = Cast<InternalScalarType>(ray.origin) - v0;
+  auto s1 = Cross(dir, e2);
+  auto s2 = Cross(s, e1);
+  auto denom = Dot(s1, e1);
+  u = Dot(s1, s) / denom;
+  v = Dot(s2, dir) / denom;
+  t = Dot(s2, e2) / denom;
+  if (std::abs(denom) < InternalScalarType(1e-8) || u < InternalScalarType(0) ||
+      v < InternalScalarType(0) || u + v > InternalScalarType(1) ||
+      t < InternalScalarType(ray.t_min) || t > InternalScalarType(ray.t_max)) {
+    return false;
+  }
 
   // We will reach here if there is an intersection
 
   CalculateTriangleDifferentials(interaction,
-      {static_cast<Float>(1 - u - v), static_cast<Float>(u),
-          static_cast<Float>(v)},
-      mesh, triangle_index);
+                                 {static_cast<Float>(1 - u - v),
+                                  static_cast<Float>(u), static_cast<Float>(v)},
+                                 mesh, triangle_index);
   AssertNear(interaction.p, ray(t));
   assert(ray.withinTimeRange(t));
   ray.setTimeMax(t);
@@ -112,21 +150,19 @@ bool TriangleIntersect(Ray &ray, const uint32_t &triangle_index,
 void Accel::setTriangleMesh(const ref<TriangleMeshResource> &mesh) {
   // Build the bounding box
   AABB bound(Vec3f(Float_INF, Float_INF, Float_INF),
-      Vec3f(Float_MINUS_INF, Float_MINUS_INF, Float_MINUS_INF));
+             Vec3f(Float_MINUS_INF, Float_MINUS_INF, Float_MINUS_INF));
   for (auto &vertex : mesh->vertices) {
-    bound.low_bnd   = Min(bound.low_bnd, vertex);
+    bound.low_bnd = Min(bound.low_bnd, vertex);
     bound.upper_bnd = Max(bound.upper_bnd, vertex);
   }
 
-  this->mesh  = mesh;   // set the pointer
-  this->bound = bound;  // set the bounding box
+  this->mesh = mesh;   // set the pointer
+  this->bound = bound; // set the bounding box
 }
 
 void Accel::build() {}
 
-AABB Accel::getBound() const {
-  return bound;
-}
+AABB Accel::getBound() const { return bound; }
 
 bool Accel::intersect(Ray &ray, SurfaceInteraction &interaction) const {
   bool success = false;
