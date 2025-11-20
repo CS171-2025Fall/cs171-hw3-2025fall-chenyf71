@@ -36,6 +36,7 @@ void IntersectionTestIntegrator::render(ref<Camera> camera, ref<Scene> scene) {
     if (cnt % (resolution.x / 10) == 0)
       Info_("Rendering: {:.02f}%", cnt * 100.0 / resolution.x);
     Sampler sampler;
+    sampler.setSeed(dx);
     for (int dy = 0; dy < resolution.y; dy++) {
       sampler.setPixelIndex2D(Vec2i(dx, dy));
       for (int sample = 0; sample < spp; sample++) {
@@ -127,16 +128,37 @@ Vec3f IntersectionTestIntegrator::Li(ref<Scene> scene, DifferentialRay &ray,
     return color;
   }
 
-  color = directLighting(scene, interaction);
+  color = directLighting(scene, interaction, sampler);
   return color;
 }
 
 Vec3f IntersectionTestIntegrator::directLighting(
-    ref<Scene> scene, SurfaceInteraction &interaction) const {
+    ref<Scene> scene, SurfaceInteraction &interaction, Sampler &sampler) const {
   Vec3f color(0, 0, 0);
-  Float dist_to_light = Norm(point_light_position - interaction.p);
-  Vec3f light_dir = Normalize(point_light_position - interaction.p);
-  auto test_ray = DifferentialRay(interaction.p, light_dir);
+  Float dist_to_light;
+  Vec3f light_dir;
+  Vec3f L_incoming;
+  if (use_area_light) {
+    Vec2f uv = sampler.get2D();
+    Vec3f sample_pos = area_light_pos +
+                       area_light_u * (uv.x - 0.5f) * area_light_size.x +
+                       area_light_v * (uv.y - 0.5f) * area_light_size.y;
+
+    Vec3f diff = sample_pos - interaction.p;
+    Float dist_sq = Dot(diff, diff);
+    dist_to_light = std::sqrt(dist_sq);
+    light_dir = diff / dist_to_light;
+    Float cos_light = Dot(area_light_normal, -light_dir);
+    if (cos_light <= 0.0f)
+      return Vec3f(0.0f);
+    L_incoming = area_light_radiance * area_light_area * (cos_light / dist_sq);
+  } else {
+    dist_to_light = Norm(point_light_position - interaction.p);
+    light_dir = Normalize(point_light_position - interaction.p);
+    Float attenuation = 1.0f / (4.0f * PI * dist_to_light * dist_to_light);
+    L_incoming = point_light_flux * attenuation;
+  }
+  Ray test_ray(interaction.p, light_dir, 1e-4f, dist_to_light - 1e-4f);
 
   // TODO(HW3): Test for occlusion
   //
@@ -155,13 +177,7 @@ Vec3f IntersectionTestIntegrator::directLighting(
   //
 
   SurfaceInteraction shadow_isect;
-  bool occluded = false;
   if (scene->intersect(test_ray, shadow_isect)) {
-    Float hit_dist = Norm(shadow_isect.p - interaction.p);
-    if (hit_dist + 1e-6f < dist_to_light)
-      occluded = true;
-  }
-  if (occluded) {
     return Vec3f(0.0f);
   }
 
@@ -184,12 +200,8 @@ Vec3f IntersectionTestIntegrator::directLighting(
         std::max(Dot(light_dir, interaction.normal), 0.0f); // one-sided
 
     // You should assign the value to color
-    Float dist2 = dist_to_light * dist_to_light;
-    Float attenuation = 1.0f / std::max(dist2, 1e-4f);
-    Vec3f flux(40.0f, 35.0f, 28.0f);
-    Vec3f irradiance = flux * (attenuation / (4.0f * PI));
-    Vec3f albedo = bsdf->evaluate(interaction);
-    color = albedo * cos_theta * irradiance;
+    color = bsdf->evaluate(interaction) * L_incoming * cos_theta;
+    color *= 2;
   }
 
   return color;
