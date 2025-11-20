@@ -33,32 +33,54 @@ public:
 class IntersectionTestIntegrator : public Integrator {
 public:
   IntersectionTestIntegrator(const Properties &props) : Integrator(props) {
-    std::string ligth_type =
-        props.getProperty<std::string>("light_type", "point");
-    if (ligth_type == "area") {
-      use_area_light = true;
-      area_light_pos =
-          props.getProperty<Vec3f>("light_position", Vec3f(0.0f, 1.9f, 0.0f));
-      area_light_u = Normalize(
-          props.getProperty<Vec3f>("light_u", Vec3f(1.0f, 0.0f, 0.0f)));
-      area_light_v = Normalize(
-          props.getProperty<Vec3f>("light_v", Vec3f(0.0f, 0.0f, 1.0f)));
-      area_light_size =
-          props.getProperty<Vec2f>("light_size", Vec2f(0.5f, 0.5f));
-      area_light_radiance =
-          props.getProperty<Vec3f>("light_radiance", Vec3f(10.0f));
-      area_light_normal = Normalize(Cross(area_light_u, area_light_v));
-      area_light_area = area_light_size.x * area_light_size.y;
-    } else {
-      use_area_light = false;
-      point_light_position = props.getProperty<Vec3f>("point_light_position",
-                                                      Vec3f(0.0F, 5.0F, 0.0F));
-      point_light_flux =
-          props.getProperty<Vec3f>("point_light_flux", Vec3f(1.0F, 1.0F, 1.0F));
-    }
-
     max_depth = props.getProperty<int>("max_depth", 16);
     spp = props.getProperty<int>("spp", 8);
+
+    auto parse_light = [](const Properties &p, LightData &l) {
+      std::string type = p.getProperty<std::string>("type", "point");
+      if (p.hasProperty("light_type"))
+        type = p.getProperty<std::string>("light_type");
+
+      if (type == "area") {
+        l.is_area_light = true;
+        l.position = p.getProperty<Vec3f>(
+            "position",
+            p.getProperty<Vec3f>("light_position", Vec3f(0.0f, 1.9f, 0.0f)));
+        l.u = Normalize(p.getProperty<Vec3f>(
+            "u", p.getProperty<Vec3f>("light_u", Vec3f(1.0f, 0.0f, 0.0f))));
+        l.v = Normalize(p.getProperty<Vec3f>(
+            "v", p.getProperty<Vec3f>("light_v", Vec3f(0.0f, 0.0f, 1.0f))));
+        l.size = p.getProperty<Vec2f>(
+            "size", p.getProperty<Vec2f>("light_size", Vec2f(0.5f, 0.5f)));
+        l.emission = p.getProperty<Vec3f>(
+            "radiance", p.getProperty<Vec3f>("light_radiance", Vec3f(10.0f)));
+
+        l.normal = Normalize(Cross(l.u, l.v));
+        l.area = l.size.x * l.size.y;
+      } else {
+        l.is_area_light = false;
+        l.position = p.getProperty<Vec3f>(
+            "position", p.getProperty<Vec3f>("point_light_position",
+                                             Vec3f(0.0F, 5.0F, 0.0F)));
+        l.emission = p.getProperty<Vec3f>(
+            "flux",
+            p.getProperty<Vec3f>("point_light_flux", Vec3f(1.0F, 1.0F, 1.0F)));
+      }
+    };
+
+    if (props.hasProperty("lights")) {
+      auto light_props_list =
+          props.getProperty<std::vector<Properties>>("lights");
+      for (const auto &light_props : light_props_list) {
+        LightData l;
+        parse_light(light_props, l);
+        lights.push_back(l);
+      }
+    } else {
+      LightData l;
+      parse_light(props, l);
+      lights.push_back(l);
+    }
   }
 
   void render(ref<Camera> camera, ref<Scene> scene) override;
@@ -70,10 +92,16 @@ public:
   std::string toString() const override {
     std::ostringstream ss;
     ss << "IntersectionTestIntegrator[\n"
-       << format("  point_light_position = {}\n", point_light_position)
-       << format("  point_light_flux     = {}\n", point_light_flux)
-       << format("  max_depth           = {}\n", max_depth)
-       << format("  spp                 = {}\n", spp) << "]";
+       << format("  max_depth = {}\n", max_depth)
+       << format("  spp       = {}\n", spp) << "  Lights Info:\n";
+
+    for (size_t i = 0; i < lights.size(); ++i) {
+      const auto &l = lights[i];
+      ss << format("    [Light {}] Type: {}, Pos: {}, Emission: {}\n", i,
+                   l.is_area_light ? "Area" : "Point", l.position, l.emission);
+    }
+
+    ss << "]";
     return ss.str();
   }
 
@@ -82,21 +110,18 @@ public:
                        Sampler &sampler) const;
 
 protected:
-  /// The position of the point light
-  Vec3f point_light_position;
+  struct LightData {
+    bool is_area_light;
+    Vec3f position;
+    Vec3f emission;
 
-  /// The radiance of the point light
-  Vec3f point_light_flux;
+    Vec3f u, v;
+    Vec2f size;
+    Vec3f normal;
+    Float area;
+  };
 
-  // Area light params
-  bool use_area_light;
-  Vec3f area_light_pos;
-  Vec3f area_light_u;
-  Vec3f area_light_v;
-  Vec2f area_light_size;
-  Vec3f area_light_radiance;
-  Vec3f area_light_normal;
-  Float area_light_area;
+  std::vector<LightData> lights;
 
   int max_depth, spp;
 };
